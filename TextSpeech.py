@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 import json
 import os
 import azure.cognitiveservices.speech as speechsdk
@@ -8,7 +8,7 @@ class TextToSpeechApp:
     def __init__(self, master):
         self.master = master
         self.master.title("Text to Speech")
-        
+
         # 音声選択用の変数を初期化
         self.voice_var = tk.StringVar()
         self.voice_var.set("ja-JP-NanamiNeural")  # デフォルト値を設定
@@ -43,8 +43,14 @@ class TextToSpeechApp:
         self.speak_button = tk.Button(button_frame, text="喋る", command=self.speak)
         self.speak_button.pack(side='left', padx=5)
 
+        self.save_button = tk.Button(button_frame, text="音声保存", command=self.save_audio)
+        self.save_button.pack(side='left', padx=5)
+
         self.clear_button = tk.Button(button_frame, text="クリア", command=self.clear)
         self.clear_button.pack(side='left', padx=5)
+
+        self.progress_bar = ttk.Progressbar(self.master, orient="horizontal", length=400, mode="determinate")
+        self.progress_bar.pack(pady=10)
 
         self.master.protocol("WM_DELETE_WINDOW", self.on_closing)
 
@@ -60,13 +66,53 @@ class TextToSpeechApp:
         speech_config = speechsdk.SpeechConfig(subscription=self.azure_key, region=self.azure_region)
         speech_config.speech_synthesis_voice_name = self.voice_var.get()
 
-        speech_synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config)
-        result = speech_synthesizer.speak_text_async(text).get()
+        text_chunks = self.split_text(text)
+        num_chunks = len(text_chunks)
+        self.progress_bar["maximum"] = num_chunks
+        self.progress_bar["value"] = 0
 
-        if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
-            messagebox.showinfo("成功", "テキストの読み上げが完了しました。")
-        else:
-            messagebox.showerror("エラー", f"音声合成に失敗しました: {result.reason}")
+        for chunk in text_chunks:
+            result = speechsdk.SpeechSynthesizer(speech_config=speech_config).speak_text_async(chunk).get()
+            if result.reason != speechsdk.ResultReason.SynthesizingAudioCompleted:
+                messagebox.showerror("エラー", f"音声合成に失敗しました: {result.reason}")
+                return
+            self.progress_bar["value"] += 1
+            self.master.update_idletasks()
+
+        messagebox.showinfo("成功", "テキストの読み上げが完了しました。")
+
+    def save_audio(self):
+        text = self.text_input.get("1.0", tk.END).strip()
+        if not text:
+            messagebox.showwarning("警告", "テキストを入力してください。")
+            return
+
+        file_path = filedialog.asksaveasfilename(defaultextension=".wav",
+                                                   filetypes=[("WAVファイル", "*.wav")],
+                                                   title="音声ファイルを保存")
+        if not file_path:
+            return
+
+        speech_config = speechsdk.SpeechConfig(subscription=self.azure_key, region=self.azure_region)
+        speech_config.speech_synthesis_voice_name = self.voice_var.get()
+
+        audio_config = speechsdk.audio.AudioOutputConfig(filename=file_path)
+        speech_synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=audio_config)
+
+        text_chunks = self.split_text(text)
+        num_chunks = len(text_chunks)
+        self.progress_bar["maximum"] = num_chunks
+        self.progress_bar["value"] = 0
+
+        for chunk in text_chunks:
+            result = speech_synthesizer.speak_text_async(chunk).get()
+            if result.reason != speechsdk.ResultReason.SynthesizingAudioCompleted:
+                messagebox.showerror("エラー", f"音声合成に失敗しました: {result.reason}")
+                return
+            self.progress_bar["value"] += 1
+            self.master.update_idletasks()
+
+        messagebox.showinfo("成功", "音声ファイルの保存が完了しました。")
 
     def clear(self):
         self.text_input.delete("1.0", tk.END)
@@ -128,6 +174,10 @@ class TextToSpeechApp:
     def on_closing(self):
         self.save_window_settings()
         self.master.destroy()
+
+    def split_text(self, text):
+        # テキストを「。」や「、」で分割する
+        return [chunk.strip() for chunk in text.replace('。', '。|').replace('、', '、|').split('|') if chunk]
 
 if __name__ == "__main__":
     root = tk.Tk()
